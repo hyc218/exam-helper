@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>答题助手</title>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f0f16; --surface: #191927; --surface2: #222236;
+    --border: #2e2e48; --text: #dddde8; --text2: #8888a8;
+    --accent: #7c6ff7; --accent-glow: rgba(124,111,247,0.25);
+    --green: #2ecc71; --red: #e74c3c; --yellow: #f1c40f;
+    --radius: 10px;
+  }
+
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text);
+    min-height: 100vh; line-height: 1.55; overflow-x: hidden;
+  }
+
+  /* ── App shell ─────────────────── */
+  .app { display: flex; flex-direction: column; height: 100vh; }
+
+  /* ── Title bar ─────────────────── */
+  .titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; background: var(--surface); border-bottom: 1px solid var(--border);
+    gap: 8px; flex-shrink: 0;
+    -webkit-app-region: drag; user-select: none;
+  }
+  .titlebar .title {
+    font-size: 0.85rem; font-weight: 600; white-space: nowrap;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    background: var(--text2); transition: background 0.3s;
+  }
+  .status-dot.monitoring { background: var(--green); box-shadow: 0 0 8px rgba(46,204,113,0.5); animation: pulse 2s infinite; }
+  .status-dot.processing { background: var(--yellow); box-shadow: 0 0 8px rgba(241,196,15,0.5); animation: pulse 0.6s infinite; }
+  .status-dot.error { background: var(--red); }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .titlebar .actions { display: flex; gap: 6px; -webkit-app-region: no-drag; }
+  .icon-btn {
+    width: 30px; height: 30px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); cursor: pointer;
+    font-size: 0.8rem; display: flex; align-items: center; justify-content: center;
+    transition: 0.15s;
+  }
+  .icon-btn:hover { background: var(--border); }
+  .icon-btn.active { border-color: var(--accent); color: var(--accent); }
+
+  /* ── Main content ──────────────── */
+  .main { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+
+  /* ── Settings drawer ───────────── */
+  .settings-drawer {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px; display: none; flex-shrink: 0;
+  }
+  .settings-drawer.open { display: block; }
+  .settings-drawer .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+  .settings-drawer .row:last-child { margin-bottom: 0; }
+  .settings-drawer label { font-size: 0.7rem; text-transform: uppercase; color: var(--text2); letter-spacing: 0.05em; font-weight: 600; }
+  .settings-drawer input, .settings-drawer select {
+    padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); font-size: 0.85rem; outline: none;
+  }
+  .settings-drawer input:focus, .settings-drawer select:focus { border-color: var(--accent); }
+
+  /* ── Answer card ───────────────── */
+  .answer-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px; animation: slideIn 0.25s ease;
+  }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .answer-card .card-header {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 0.75rem; color: var(--text2); margin-bottom: 10px;
+  }
+  .answer-card .card-header .idx { color: var(--accent); font-weight: 700; font-size: 0.8rem; }
+  .answer-card .content {
+    font-size: 0.85rem; line-height: 1.65;
+  }
+  .answer-card .content p { margin-bottom: 6px; }
+  .answer-card .content p:last-child { margin-bottom: 0; }
+  .answer-card .content code {
+    background: rgba(124,111,247,0.15); padding: 1px 5px; border-radius: 4px; font-size: 0.8rem;
+  }
+  .answer-card .content pre {
+    background: #0d0d1a; padding: 10px; border-radius: 6px; overflow-x: auto; margin: 6px 0; font-size: 0.8rem;
+  }
+  .answer-card .card-actions {
+    display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border);
+  }
+
+  /* ── Buttons ───────────────────── */
+  .btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); cursor: pointer;
+    font-size: 0.75rem; transition: 0.15s; white-space: nowrap;
+  }
+  .btn:hover { background: var(--border); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { box-shadow: 0 0 16px var(--accent-glow); }
+  .btn.danger { border-color: var(--red); color: var(--red); }
+  .btn.danger:hover { background: var(--red); color: #fff; }
+  .btn.sm { padding: 3px 8px; font-size: 0.7rem; border-radius: 4px; }
+
+  /* ── Empty state ───────────────── */
+  .empty {
+    flex: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; color: var(--text2); text-align: center; padding: 30px 20px;
+  }
+  .empty .emoji { font-size: 2.5rem; margin-bottom: 10px; }
+  .empty p { font-size: 0.8rem; margin-top: 4px; }
+
+  /* ── Toast ─────────────────────── */
+  .toast {
+    position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+    background: var(--accent); color: #fff; padding: 8px 16px; border-radius: 20px;
+    font-size: 0.8rem; pointer-events: none; opacity: 0; transition: opacity 0.2s;
+    z-index: 999;
+  }
+  .toast.show { opacity: 1; }
+
+  /* ── Scrollbar ─────────────────── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Title bar -->
+  <div class="titlebar">
+    <div class="title">
+      <span class="status-dot" id="statusDot" title="状态"></span>
+      <span id="statusText">就绪</span>
+    </div>
+    <div class="actions">
+      <button class="icon-btn" id="btnSettings" title="API 设置">⚙</button>
+      <button class="icon-btn" id="btnToggle" title="开始/停止监听">▶</button>
+      <button class="icon-btn" id="btnClear" title="清空记录">✕</button>
+    </div>
+  </div>
+
+  <!-- Settings drawer -->
+  <div class="settings-drawer" id="settingsDrawer">
+    <div class="row">
+      <label>AI 服务商</label>
+      <select id="provider">
+        <option value="openai">智谱 GLM-4.6V（推荐·支持图片）</option>
+        <option value="gemini">Google Gemini</option>
+        <option value="deepseek">DeepSeek</option>
+      </select>
+    </div>
+    <div class="row">
+      <label>API Key</label>
+      <input id="apiKey" type="password" placeholder="粘贴 API Key">
+    </div>
+    <div class="row">
+      <label>模型</label>
+      <input id="model" type="text" placeholder="deepseek-chat">
+    </div>
+    <div class="row" id="apiBaseRow" style="display:none">
+      <label>API Base URL</label>
+      <input id="apiBase" type="text" placeholder="https://api.deepseek.com/v1">
+    </div>
+    <button class="btn primary" id="btnSaveSettings" style="width:100%;justify-content:center;">保存设置</button>
+  </div>
+
+  <!-- Main content -->
+  <div class="main" id="mainContent">
+    <div class="empty" id="emptyState">
+      <div class="emoji">🎯</div>
+      <p>配置 API Key 后点击 ▶ 开始</p>
+      <p style="font-size:0.72rem;color:var(--text2);margin-top:2px;">截图自动检测 · AI 即时作答</p>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+</div>
+
+<script>
+  const $ = (s) => document.querySelector(s);
+
+  // ── State ────────────────────────
+  const cfg = {
+    provider: localStorage.getItem('eh_provider') || 'openai',
+    apiKey: localStorage.getItem('eh_apiKey') || 'dc7ce9bce0a64a8b86c8a03328e43fa5.IH0vFrdkXiAKXrIi',
+    model: localStorage.getItem('eh_model') || 'glm-4.6v',
+    apiBase: localStorage.getItem('eh_apiBase') || 'https://open.bigmodel.cn/api/paas/v4',
+  };
+  let isMonitoring = false;
+  let answers = [];
+  let ws = null;
+
+  // ── Init ─────────────────────────
+  function init() {
+    $('#provider').value = cfg.provider;
+    $('#apiKey').value = cfg.apiKey;
+    $('#model').value = cfg.model;
+    $('#apiBase').value = cfg.apiBase;
+    updateProviderUI();
+
+    // Events
+    $('#btnSettings').addEventListener('click', () => $('#settingsDrawer').classList.toggle('open'));
+    $('#btnToggle').addEventListener('click', toggleMonitor);
+    $('#btnClear').addEventListener('click', clearHistory);
+    $('#btnSaveSettings').addEventListener('click', saveSettings);
+    $('#provider').addEventListener('change', updateProviderUI);
+    document.addEventListener('paste', handleManualPaste);
+
+    // Init defaults
+    if (!cfg.model) {
+      if (cfg.provider === 'deepseek') cfg.model = 'deepseek-chat';
+      else if (cfg.provider === 'gemini') cfg.model = 'gemini-2.5-flash';
+    }
+    if (!cfg.apiBase && cfg.provider === 'deepseek') cfg.apiBase = 'https://api.deepseek.com/v1';
+
+    updateUI();
+  }
+
+  function updateProviderUI() {
+    const p = $('#provider').value;
+    $('#apiBaseRow').style.display = (p === 'openai') ? '' : 'none';
+  }
+
+  // ── WebSocket ────────────────────
+  function connectWS() {
+    if (ws && ws.readyState === WebSocket.OPEN) return;
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}`);
+
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      handleWSMessage(msg);
+    };
+
+    ws.onclose = () => {
+      if (isMonitoring) setTimeout(connectWS, 2000);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  function handleWSMessage(msg) {
+    switch (msg.type) {
+      case 'status':
+        if (msg.status === 'monitoring') { isMonitoring = true; }
+        else if (msg.status === 'idle') { isMonitoring = false; }
+        updateUI();
+        break;
+      case 'processing':
+        setStatus('processing', 'AI 分析中...');
+        break;
+      case 'answer':
+        setStatus('monitoring', '监听中');
+        addAnswer(msg.answer, msg.time);
+        notify();
+        break;
+      case 'error':
+        setStatus('error', '出错');
+        addAnswer('❌ ' + msg.error, Date.now());
+        break;
+    }
+  }
+
+  // ── Manual paste ─────────────────
+  async function handleManualPaste(e) {
+    if (isMonitoring) return; // auto mode handles it
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault();
+        if (!cfg.apiKey) { toast('请先配置 API Key'); $('#settingsDrawer').classList.add('open'); return; }
+        setStatus('processing', '手动分析中...');
+        const file = item.getAsFile();
+        const form = new FormData();
+        form.append('image', file);
+        form.append('provider', cfg.provider);
+        form.append('apiKey', cfg.apiKey);
+        form.append('model', cfg.model);
+        form.append('apiBase', cfg.apiBase);
+        try {
+          const resp = await fetch('/api/analyze', { method: 'POST', body: form });
+          const data = await resp.json();
+          if (!data.success) throw new Error(data.error);
+          addAnswer(data.answer, Date.now());
+          setStatus('idle', '就绪');
+        } catch (err) {
+          setStatus('error', '出错');
+          addAnswer('❌ ' + err.message, Date.now());
+        }
+        return;
+      }
+    }
+  }
+
+  // ── Monitor toggle ──────────────
+  async function toggleMonitor() {
+    if (!cfg.apiKey) { toast('请先配置 API Key'); $('#settingsDrawer').classList.add('open'); return; }
+    if (isMonitoring) {
+      await fetch('/api/auto/stop', { method: 'POST' });
+      isMonitoring = false;
+      setStatus('idle', '就绪');
+    } else {
+      connectWS();
+      await fetch('/api/auto/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cfg),
+      });
+      isMonitoring = true;
+      setStatus('monitoring', '监听中');
+    }
+    updateUI();
+  }
+
+  // ── Answer management ────────────
+  function addAnswer(text, time) {
+    answers.unshift({ text, time: time || Date.now() });
+    if (answers.length > 40) answers.pop();
+    renderAnswers();
+  }
+
+  function renderAnswers() {
+    const main = $('#mainContent');
+    if (answers.length === 0) {
+      main.innerHTML = `<div class="empty" id="emptyState">
+        <div class="emoji">🎯</div><p>${isMonitoring ? '等待截图...' : '点击 ▶ 开始监听'}</p>
+        <p style="font-size:0.72rem;color:var(--text2);margin-top:2px;">使用 Win+Shift+S 截图后自动分析</p>
+      </div>`;
+      return;
+    }
+    main.innerHTML = answers.map((a, i) => `
+      <div class="answer-card">
+        <div class="card-header">
+          <span class="idx">#${answers.length - i}</span>
+          <span>${new Date(a.time).toLocaleTimeString('zh-CN', { hour:'2-digit', minute:'2-digit', second:'2-digit' })}</span>
+        </div>
+        <div class="content">${marked.parse(a.text)}</div>
+        <div class="card-actions">
+          <button class="btn sm" onclick="copyAnswer(${i})">📋 复制</button>
+          <button class="btn sm danger" onclick="deleteAnswer(${i})">✕</button>
+        </div>
+      </div>
+    `).join('');
+    main.scrollTop = 0; // scroll to latest
+  }
+
+  function clearHistory() {
+    answers = [];
+    renderAnswers();
+    fetch('/api/cleanup', { method: 'POST' }).catch(() => {});
+  }
+
+  function deleteAnswer(i) {
+    answers.splice(i, 1);
+    renderAnswers();
+  }
+
+  window.copyAnswer = function(i) {
+    const text = answers[i]?.text || '';
+    const plain = text.replace(/<[^>]*>/g, '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+    navigator.clipboard.writeText(plain).then(() => toast('已复制'));
+  };
+
+  window.deleteAnswer = deleteAnswer;
+
+  // ── UI helpers ───────────────────
+  function setStatus(status, text) {
+    const dot = $('#statusDot');
+    dot.className = 'status-dot ' + status;
+    $('#statusText').textContent = text || status;
+  }
+
+  function updateUI() {
+    const btn = $('#btnToggle');
+    if (isMonitoring) {
+      btn.textContent = '⏸';
+      btn.classList.add('active');
+    } else {
+      btn.textContent = '▶';
+      btn.classList.remove('active');
+    }
+    if (!isMonitoring && $('#statusDot').classList.contains('monitoring') === false
+        && !$('#statusDot').classList.contains('processing')) {
+      setStatus('idle', '就绪');
+    }
+    renderAnswers();
+  }
+
+  function saveSettings() {
+    cfg.provider = $('#provider').value;
+    cfg.apiKey = $('#apiKey').value;
+    cfg.model = $('#model').value;
+    cfg.apiBase = $('#apiBase').value;
+    localStorage.setItem('eh_provider', cfg.provider);
+    localStorage.setItem('eh_apiKey', cfg.apiKey);
+    localStorage.setItem('eh_model', cfg.model);
+    localStorage.setItem('eh_apiBase', cfg.apiBase);
+    $('#settingsDrawer').classList.remove('open');
+    toast('设置已保存');
+  }
+
+  function toast(msg) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 1800);
+  }
+
+  function notify() {
+    // Flash title for attention
+    if (document.hidden) {
+      document.title = '🔔 答案已出!';
+      setTimeout(() => { document.title = '答题助手'; }, 3000);
+    }
+  }
+
+  // Visibility change - reconnect WS
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && isMonitoring) connectWS();
+  });
+
+  // ── Boot ─────────────────────────
+  init();
+  connectWS();
+</script>
+</body>
+</html>
